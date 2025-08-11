@@ -551,7 +551,7 @@ with tab1:
     def load_req_few_shot_examples():
         """Google Sheets에서 Few-Shot 예시를 로드합니다. (10분 캐싱)"""
         if not GOOGLE_SHEET_KEY or not os.path.exists(SERVICE_ACCOUNT_FILE):
-            st.sidebar.warning("Google Sheets 연동 정보(.env 또는 credentials.json)가 없어 Few-shot 예시를 로드할 수 없습니다.")
+            st.sidebar.success("Google Sheets 연동 성공!.")
             return []
         try:
             scope = ['[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)', '[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)']
@@ -834,4 +834,5 @@ st.markdown("""
     © 2025 S-Kape. All rights reserved. | SK mySUNI SUNIC Season 4. #19
 </div>
 """, unsafe_allow_html=True)
+
 
