@@ -729,7 +729,7 @@ with tab3:
         elif not pinecone_index:
             st.error("Pinecone DB가 연결되지 않았습니다. .env 파일을 확인하세요.")
         else:
-            st.write(f"요구사항: {req_content}")
+            #st.write(f"요구사항: {req_content}")
             modified_code = ""
             with st.spinner("1단계: 요구사항 기반으로 코드 수정 중..."):
                 try:
@@ -776,3 +776,4 @@ st.markdown("""
     © 2025 S-Kape. All rights reserved. | SK mySUNI SUNIC Season 4. #19
 </div>
 """, unsafe_allow_html=True)
+
