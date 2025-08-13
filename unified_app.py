@@ -676,16 +676,11 @@ with tab3:
     spacer()
 
     section_heading("수정된 코드 생성 및 예측")
-    if "file_content_tab3" not in st.session_state:
-        st.session_state["file_content_tab3"] = ""  # 세션 상태에 기본값 설정
-
-    file_content_tab3 = st.text_area("파일 내용", value=st.session_state["file_content_tab3"], key="file_content_tab3", height=180)
-
-# **세션 상태 업데이트**: 사용자가 입력한 값을 세션 상태에 저장
-    if file_content_tab3:
-        st.session_state["file_content_tab3"] = file_content_tab3
+    st.text_area("파일 내용", value=st.session_state.get("file_content_tab3", ""), key="file_content_tab3", height=180)
 
     req_content = st.session_state.get("req_text_tab3", "")
+
+   
     # pr_id 수동으로 정의
     pr_id = "manual_pr_id"  # 수동으로 pr_id를 설정
 
@@ -750,4 +745,5 @@ st.markdown("""
     © 2025 S-Kape. All rights reserved. | SK mySUNI SUNIC Season 4. #19
 </div>
 """, unsafe_allow_html=True)
+
 
