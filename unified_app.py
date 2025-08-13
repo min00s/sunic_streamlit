@@ -250,8 +250,8 @@ def banner(
 def section_heading(text: str, bg: str = "#F8D7DA", color: str = "inherit"):
     st.markdown(
         f"""<div class="section-band" style="background:{bg};">
-               <span class="title" style="color:{color};">{text}</span>
-           </div>""",
+                <span class="title" style="color:{color};">{text}</span>
+            </div>""",
         unsafe_allow_html=True
     )
 
@@ -317,29 +317,32 @@ def _gh_get(url: str, raw: bool = False, **extra_hdr):
     resp.raise_for_status()
     return resp.text if raw else resp.json()
 
-def fetch_pr_code_only(owner: str, repo: str, pr_number: int):
+def fetch_pr_details(owner: str, repo: str, pr_number: int):
+    """
+    주어진 Pull Request에 대해 변경된 파일 목록과 통합된 diff 내용을 가져옵니다.
+    """
     API_ROOT = "https://api.github.com"
-    pr = _gh_get(f"{API_ROOT}/repos/{owner}/{repo}/pulls/{pr_number}")
-    base_sha, head_sha = pr["base"]["sha"], pr["head"]["sha"]
-
-    def get_file_at_sha(path: str, sha: str):
-        try:
-            meta = _gh_get(f"{API_ROOT}/repos/{owner}/{repo}/contents/{path}?ref={sha}")
-            return base64.b64decode(meta["content"]).decode('utf-8', errors='ignore')
-        except Exception:
-            return f"# '{path}' 경로의 파일을 '{sha}' 커밋에서 찾을 수 없습니다."
-
-    files = _gh_get(f"{API_ROOT}/repos/{owner}/{repo}/pulls/{pr_number}/files")
-    py_files = [f for f in files if f["filename"].endswith(".py")]
-    if not py_files and not files:
+    files_url = f"{API_ROOT}/repos/{owner}/{repo}/pulls/{pr_number}/files"
+    files = _gh_get(files_url)
+    
+    if not files:
         raise ValueError("PR에 변경된 파일이 없습니다.")
-    target_file = py_files[0] if py_files else files[0]
-    if not py_files:
-        st.warning(f"PR에서 파이썬(.py) 파일을 찾을 수 없습니다. 첫 번째 파일 '{target_file['filename']}'을 대신 사용합니다.")
-
-    original_code = get_file_at_sha(target_file['filename'], base_sha)
-    modified_code = get_file_at_sha(target_file['filename'], head_sha)
-    return original_code, modified_code
+        
+    changed_files = [f["filename"] for f in files]
+    
+    # 모든 파일의 diff ('patch') 내용을 하나의 문자열로 결합합니다.
+    combined_diff = ""
+    for file in files:
+        file_diff = file.get("patch", "")
+        # 각 파일의 diff 정보를 명확히 구분하기 위해 파일 경로 헤더를 추가합니다.
+        combined_diff += f"--- a/{file['filename']}\n"
+        combined_diff += f"+++ b/{file['filename']}\n"
+        combined_diff += file_diff + "\n\n"
+        
+    return {
+        "files": changed_files,
+        "diff": combined_diff.strip()
+    }
 
 def generate_modified_code(requirements: str, original_code: str) -> str:
     code_gen_llm = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=OPENAI_API_KEY)
@@ -377,18 +380,38 @@ def search_similar_prs(query_text: str, top_k=3):
     if pinecone_index and (qvec := embed_text(query_text)):
         return pinecone_index.query(vector=qvec, top_k=top_k, include_metadata=True).matches or []
     return []
+
+# 기존의 get_github_file 함수를 아래 코드로 교체해주세요.
+
 def get_github_file(owner, repo, file_path, branch="main"):
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={branch}"
+    """GitHub에서 단일 파일의 내용을 가져옵니다. 입력값의 양쪽 공백을 자동으로 제거합니다."""
+    
+    # 입력값의 양쪽에 있을 수 있는 모든 공백, 줄바꿈 등을 자동으로 제거합니다.
+    clean_owner = owner.strip()
+    clean_repo = repo.strip()
+    clean_file_path = file_path.strip()
+    clean_branch = branch.strip()
+
+    # 정리된 값으로 API URL을 생성합니다.
+    url = f"https://api.github.com/repos/{clean_owner}/{clean_repo}/contents/{clean_file_path}?ref={clean_branch}"
+    
     headers = {"Authorization": f"Bearer {GH_TOKEN}"}
     response = requests.get(url, headers=headers)
+    
     if response.status_code != 200:
         raise Exception(f"GitHub API 오류: {response.status_code}\n{response.text}")
+        
     data = response.json()
+    
+    # 파일이 아닌 디렉토리(폴더)를 요청한 경우에 대한 확인을 추가합니다.
+    if isinstance(data, list):
+        raise Exception(f"'{clean_file_path}'는 파일이 아닌 폴더(디렉토리)입니다. 파일의 전체 경로를 입력해주세요.")
+        
     if "content" in data:
         file_content = base64.b64decode(data["content"]).decode("utf-8")
         return file_content
     else:
-        raise Exception(f"파일을 찾을 수 없습니다: {file_path}")
+        raise Exception(f"'{clean_file_path}' 파일을 찾을 수 없습니다.")
 
 
 def render_rag_results(result_data):
@@ -413,10 +436,9 @@ def render_rag_results(result_data):
         이 점수는 요구사항, 코드 변경 내역, 과거 유사 사례를 종합하여 AI가 내린 판단의 확신도를 나타냅니다.\n 
         신뢰도가 높은 항목을 최우선으로 검토하면 효율적으로 잠재적 위험을 관리할 수 있습니다.\n
         
-        신뢰도 높음 (0.9 이상): 반드시 가장 먼저 확인해야 할 '위험 신호'입니다. 실제 문제일 가능성이 매우 높습니다.\n
-        신뢰도 중간 (0.7 ~ 0.89): 충분히 발생 가능한 문제이므로 꼼꼼히 검토할 필요가 있습니다.\n
-        신뢰도 낮음 (0.7 미만): 발생 확률은 낮지만, 놓칠 수 있는 부분을 짚어주는 '참고 의견'으로 활용할 수 있습니다.\n
-        
+        **신뢰도 높음 (0.9 이상):** 반드시 가장 먼저 확인해야 할 '위험 신호'입니다. 실제 문제일 가능성이 매우 높습니다.\n
+        **신뢰도 중간 (0.7 ~ 0.89):** 충분히 발생 가능한 문제이므로 꼼꼼히 검토할 필요가 있습니다.\n
+        **신뢰도 낮음 (0.7 미만):** 발생 확률은 낮지만, 놓칠 수 있는 부분을 짚어주는 '참고 의견'으로 활용할 수 있습니다.\n
         """)
 
     if result_data.get("candidates"):
@@ -474,7 +496,7 @@ with tab1:
     @st.cache_data(ttl=600)
     def load_req_few_shot_examples():
         if not GOOGLE_SHEET_KEY or not os.path.exists(SERVICE_ACCOUNT_FILE):
-            st.sidebar.success("Google Sheets 연동 성공!.")
+            st.sidebar.success("Google Sheets 연동 성공!")
             return []
         try:
             scope = ['[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)', '[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)']
@@ -493,7 +515,7 @@ with tab1:
             st.sidebar.success("Google Sheets Few-shot 예시 로드 성공!")
             return examples
         except Exception as e:
-            st.sidebar.success(f"Google Sheets 로드 성공!")
+            st.sidebar.success("Google Sheets 로드 성공!")
             return []
 
     def extract_requirements_from_text(text, few_shot_examples):
@@ -559,14 +581,15 @@ with tab1:
         )
 
 # ==================================================================================
-# << TAB 2: Side-Effect 예측기 (RAG 포함) >>
+# ==================================================================================
+# << TAB 2: Side-Effect 예측기 (RAG 포함) >> - 수정된 코드
 # ==================================================================================
 with tab2:
     banner("tab2.png", max_height=400)
     spacer()
 
     section_heading("GitHub PR URL 입력")
-    pr_url_tab2 = st.text_input("🔗 PR URL", key="pr_url_input_tab2", placeholder="[https://github.com/owner/repo/pull/123](https://github.com/owner/repo/pull/123)")
+    pr_url_tab2 = st.text_input("🔗 PR URL", key="pr_url_input_tab2", placeholder="https://github.com/owner/repo/pull/123")
 
     if st.button("PR 코드 불러오기", key="fetch_pr_tab2", use_container_width=True):
         if not pr_url_tab2:
@@ -574,10 +597,10 @@ with tab2:
         else:
             try:
                 owner, repo, pr_no = parse_pr_url(pr_url_tab2)
-                with st.spinner("GitHub에서 코드 가져오는 중..."):
-                    orig, mod = fetch_pr_code_only(owner, repo, pr_no)
-                st.session_state.update({"orig_tab2": orig, "mod_tab2": mod})
-                st.success("코드 로드 완료!")
+                with st.spinner("GitHub에서 PR 변경 내역 전체를 가져오는 중..."):
+                    pr_details = fetch_pr_details(owner, repo, pr_no)
+                    st.session_state.pr_details_tab2 = pr_details
+                st.success("PR 정보 로드 완료!")
             except Exception as e:
                 st.error(f"GitHub 불러오기 실패: {e}")
     spacer()
@@ -590,18 +613,34 @@ with tab2:
         with st.expander("업로드된 요구사항 보기"): st.markdown(req_text_tab2)
     spacer()
 
-    section_heading("코드 확인 및 수정")
-    st.text_area("원본 코드", key="orig_tab2", height=180)
-    st.text_area("수정된 코드", key="mod_tab2", height=180)
+    section_heading("코드 변경 내역 확인")
+    if 'pr_details_tab2' in st.session_state:
+        file_list = st.session_state.pr_details_tab2['files']
+        # st.expander를 사용하여 클릭 시 펼쳐지는 섹션을 만듭니다.
+        with st.expander(f"📝 변경된 파일 목록 보기 ({len(file_list)}개)"):
+            # 파일 목록은 expander 내부에 표시됩니다.
+            for file_name in file_list:
+                st.markdown(f"- `{file_name}`")
+
+        spacer(10)
+
+        st.text_area(
+            "전체 코드 변경 내역 (Diff)",
+            value=st.session_state.pr_details_tab2['diff'],
+            height=300,
+            key="diff_display_tab2",
+            help="이 PR에 포함된 모든 코드 변경사항입니다."
+        )
+    else:
+        st.info("PR 코드를 불러오면 여기에 변경된 파일 목록과 전체 코드 변경 내역이 표시됩니다.")
     st.markdown("---")
 
     if st.button("RAG 기반 예측 및 DB 저장", use_container_width=True, key="predict_btn_tab2"):
         req_content = st.session_state.get("req_text_tab2", "")
-        orig_code = st.session_state.get("orig_tab2", "")
-        mod_code = st.session_state.get("mod_tab2", "")
+        pr_details = st.session_state.get("pr_details_tab2")
 
-        if not pr_url_tab2 or not req_content or not orig_code:
-            st.warning("PR URL, 요구사항, 코드를 모두 준비해주세요.")
+        if not pr_url_tab2 or not req_content or not pr_details:
+            st.warning("PR URL, 요구사항, 그리고 PR 코드 변경 내역을 모두 준비해주세요.")
         elif not pinecone_index:
             st.error("Pinecone DB가 연결되지 않았습니다. .env 파일을 확인하세요.")
         else:
@@ -609,22 +648,22 @@ with tab2:
                 try:
                     owner, repo, pr_no = parse_pr_url(pr_url_tab2)
                     pr_id = f"{owner}/{repo}#{pr_no}"
-                    code_diff = make_code_diff(orig_code, mod_code)
-                    
+                    code_diff = pr_details['diff']
+
                     query_text = f"[요구사항]\n{req_content}\n\n[코드 변경]\n{code_diff}"
                     matches = search_similar_prs(query_text)
                     rag_context = "\n".join([f"▶ PR: {m.metadata.get('pr_id', '')} (유사도: {m.score:.2f})\n - 예측 요약: {m.metadata.get('side_effect', '')[:200]}..." for m in matches]) if matches else "과거 유사 PR 없음"
-                    
+
                     parser = JsonOutputParser()
                     chain = RAG_PROMPT_TEMPLATE | se_llm | parser
                     response_data = chain.invoke({"rag_context": rag_context, "requirements": req_content, "code_diff": code_diff})
-                    
+
                     st.session_state["final_result_tab2"] = response_data
-                    
+
                     embedding_text = f"[요구사항]\n{req_content}\n\n[코드 변경]\n{code_diff}\n\n[예측 결과]\n{json.dumps(response_data, ensure_ascii=False, indent=2)}"
                     meta = {"pr_id": pr_id, "title": pr_url_tab2, "desc": req_content[:150], "side_effect": response_data.get('summary', '')[:1000], "url": pr_url_tab2}
                     upsert_to_pinecone(pr_id, embedding_text, meta)
-                    
+
                     st.success("RAG 기반 예측 및 DB 저장이 완료되었습니다!")
                 except Exception as e:
                     st.error(f"예측 중 오류 발생: {e}")
@@ -662,27 +701,24 @@ with tab3:
     # 요구사항 명세서 업로드 기능 추가
     section_heading("요구사항 명세서 업로드")
     uploaded_req_file_tab3 = st.file_uploader("요구사항 엑셀(.xlsx) 파일 업로드", type=["xlsx"], key="req_uploader_tab3")
-  
+ 
     if uploaded_req_file_tab3:
         try:
-            # 엑셀 파일을 읽어들이고 내용을 session_state에 저장
             req_text_tab3 = read_excel_to_string(uploaded_req_file_tab3)
             st.session_state["req_text_tab3"] = req_text_tab3
             st.success("요구사항 파일 분석 완료!")
             with st.expander("업로드된 요구사항 보기"):
-                st.markdown(req_text_tab3)  # 엑셀 파일에서 읽어들인 내용을 화면에 출력
+                st.markdown(req_text_tab3)
         except Exception as e:
             st.warning(f"엑셀 처리 실패: {e}")
     spacer()
 
     section_heading("수정된 코드 생성 및 예측")
-    st.text_area("파일 내용",key="file_content_tab3", height=180)
+    st.text_area("파일 내용", key="file_content_tab3", height=180)
 
     req_content = st.session_state.get("req_text_tab3", "")
 
-   
-    # pr_id 수동으로 정의
-    pr_id = "manual_pr_id"  # 수동으로 pr_id를 설정
+    pr_id = "manual_pr_id"
 
     if st.button("🚀 수정 코드 생성 및 Side-Effect 예측", use_container_width=True, key="generate_predict_btn_tab3"):
         file_content = st.session_state.get("file_content_tab3", "")
@@ -693,11 +729,11 @@ with tab3:
         elif not pinecone_index:
             st.error("Pinecone DB가 연결되지 않았습니다. .env 파일을 확인하세요.")
         else:
-            st.write(f"요구사항: {req_content}")  # 요구사항 내용 출력
+            st.write(f"요구사항: {req_content}")
             modified_code = ""
             with st.spinner("1단계: 요구사항 기반으로 코드 수정 중..."):
                 try:
-                    modified_code = generate_modified_code(req_content, file_content)  # 이제 req_content 사용
+                    modified_code = generate_modified_code(req_content, file_content)
                     st.session_state["modified_code_tab3"] = modified_code
                     st.success("코드 수정 완료!")
                 except Exception as e:
@@ -706,7 +742,6 @@ with tab3:
 
             with st.spinner("2단계: 유사 사례 검색 및 Side-Effect 예측 중..."):
                 try:
-                    # 원본 코드 및 수정된 코드로 Side Effect 예측
                     code_diff = make_code_diff(file_content, modified_code)
 
                     query_text = f"[요구사항]\n{req_content}\n\n[코드 변경]\n{code_diff}"
@@ -735,16 +770,9 @@ with tab3:
         st.markdown("## 🤖 RAG 기반 예측 결과")
         render_rag_results(st.session_state["final_result_tab3"])
 
-
-
-
-
 # --- 하단 고정 박스 ---
 st.markdown("""
 <div class="footer">
     © 2025 S-Kape. All rights reserved. | SK mySUNI SUNIC Season 4. #19
 </div>
 """, unsafe_allow_html=True)
-
-
-
