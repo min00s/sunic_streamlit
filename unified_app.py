@@ -676,7 +676,7 @@ with tab3:
     spacer()
 
     section_heading("수정된 코드 생성 및 예측")
-    st.text_area("파일 내용", value=st.session_state.get("file_content_tab3", ""), key="file_content_tab3", height=180)
+    st.text_area("파일 내용",key="file_content_tab3", height=180)
 
     req_content = st.session_state.get("req_text_tab3", "")
 
@@ -745,5 +745,6 @@ st.markdown("""
     © 2025 S-Kape. All rights reserved. | SK mySUNI SUNIC Season 4. #19
 </div>
 """, unsafe_allow_html=True)
+
 
 
